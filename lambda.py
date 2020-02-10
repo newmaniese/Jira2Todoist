@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import uuid
@@ -32,27 +33,33 @@ def get_task_id_from_key(key):
             return task['id']
 
 def create_task(issue):
+    due_date = issue['fields']['duedate']
     key = issue['key']
     summary = issue['fields']['summary']
-    return requests.post(
+    priority = 5 - int(issue['fields']['priority']['id'])
+    # If critical or higher, Due Today
+    if priority >= 3:
+        due_date = datetime.date.today().isoformat()
+    data = json.dumps({
+        "content": f"[{key}: {summary}](https://grahamdigital.atlassian.net/browse/{key})",
+        "due_date": due_date,
+        "priority": 5 - int(issue['fields']['priority']['id']),
+        "project_id": key.startswith("SUP") and SUPPORT_TD_PROJECT or JIRA_TD_PROJECT
+    })
+    ret = requests.post(
         "https://api.todoist.com/rest/v1/tasks",
-        data=json.dumps({
-            "content": f"[{key}: {summary}](https://grahamdigital.atlassian.net/browse/{key})",
-            "due_string": issue['fields']['duedate'],
-            "due_lang": "en",
-            "priority": 5 - int(issue['fields']['priority']['id']),
-            "project_id": issue['key'].startswith("SUP") and SUPPORT_TD_PROJECT or JIRA_TD_PROJECT
-        }),
+        data=data,
         headers={
             "Content-Type": "application/json",
             "X-Request-Id": str(uuid.uuid4()),
             "Authorization": f"Bearer {TODOIST_TOKEN}"
-        }).json()
+        })
+    return ret.json()
 
 def mark_task_done(id):
     return requests.post(f"https://api.todoist.com/rest/v1/tasks/{id}/close",
             headers={
-                "Authorization": "Bearer {}".format(os.environ.get("TODOIST_TOKEN"))
+                "Authorization": f"Bearer {TODOIST_TOKEN}"
             })
 
 def mark_task_done_from_key(key):
@@ -82,7 +89,8 @@ class ChangeActions(object):
             mark_task_done_from_key(self.jira_key)
 
     def update_task(self, change):
-        update_task(task_id, change)
+        if self.task_id:
+            update_task(self.task_id, change)
 
     def __getitem__(self, key):
         return getattr(self, f'change_{key}', lambda x: None)
@@ -100,10 +108,14 @@ class ChangeActions(object):
             self.mark_task_done()
 
     def change_priority(self, change):
-        self.update_task({ priority: 5 - change.get('to')})
+        update = { 'priority' : 5 - int(change.get('to')) }
+        # If critical or higher, Due Today
+        if update['priority'] >= 3:
+            update['due_date'] = datetime.today().isoformat()
+        self.update_task(update)
 
     def change_duedate(self, change):
-        self.update_task({ due_date: change.get('to') })
+        self.update_task({ 'due_date': change.get('to') })
 
 
 def lambda_handler(event, context):
