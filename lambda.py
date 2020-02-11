@@ -32,6 +32,7 @@ def get_task_id_from_key(key):
         if key in task['content']:
             return task['id']
 
+
 def create_task(issue):
     due_date = issue['fields']['duedate']
     key = issue['key']
@@ -56,16 +57,19 @@ def create_task(issue):
         })
     return ret.json()
 
+
 def mark_task_done(id):
     return requests.post(f"https://api.todoist.com/rest/v1/tasks/{id}/close",
-            headers={
-                "Authorization": f"Bearer {TODOIST_TOKEN}"
-            })
+                         headers={
+                             "Authorization": f"Bearer {TODOIST_TOKEN}"
+                         })
+
 
 def mark_task_done_from_key(key):
     task_id = get_task_id_from_key(key)
     if task_id:
         return mark_task_done(task_id)
+
 
 def update_task(id, change):
     return requests.post(
@@ -76,6 +80,7 @@ def update_task(id, change):
             "X-Request-Id": str(uuid.uuid4()),
             "Authorization": f"Bearer {TODOIST_TOKEN}"
         }).json()
+
 
 class ChangeActions(object):
     def __init__(self, jira_key=None, task_id=None):
@@ -108,14 +113,14 @@ class ChangeActions(object):
             self.mark_task_done()
 
     def change_priority(self, change):
-        update = { 'priority' : 5 - int(change.get('to')) }
+        update = {'priority': 5 - int(change.get('to'))}
         # If critical or higher, Due Today
         if update['priority'] >= 3:
             update['due_date'] = datetime.today().isoformat()
         self.update_task(update)
 
     def change_duedate(self, change):
-        self.update_task({ 'due_date': change.get('to') })
+        self.update_task({'due_date': change.get('to')})
 
 
 def lambda_handler(event, context):
