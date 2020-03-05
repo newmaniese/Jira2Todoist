@@ -32,6 +32,7 @@ MOBILE_TD_PROJECT = 2230496957
 JIRA_DISPLAY_NAME = "Michael Newman"
 TODOIST_TOKEN = os.environ.get("TODOIST_TOKEN")
 
+
 def get_project_id(key):
     project, number = key.split("-")
     if project == "SUP":
@@ -40,6 +41,7 @@ def get_project_id(key):
         return MOBILE_TD_PROJECT
     else:
         return JIRA_TD_PROJECT
+
 
 def get_task_id_from_key(key):
     tasks = requests.get(
@@ -89,17 +91,20 @@ def create_task(issue):
         print(ret.text)
         raise
 
+
 def mark_task_done(id):
     return requests.post(f"https://api.todoist.com/rest/v1/tasks/{id}/close",
                          headers={
                              "Authorization": f"Bearer {TODOIST_TOKEN}"
                          })
 
+
 def mark_task_done_from_key(key):
     task_id = get_task_id_from_key(key)
     if task_id:
         return mark_task_done(task_id)
     print("No Task ID, ignoring")
+
 
 def update_task(id, change):
     print(f"Updating task, {id}, change: {change}")
@@ -111,11 +116,6 @@ def update_task(id, change):
             "X-Request-Id": str(uuid.uuid4()),
             "Authorization": f"Bearer {TODOIST_TOKEN}"
         })
-    try:
-        return ret.json()
-    except json.JSONDecodeError:
-        print(ret.text)
-        raise
 
 
 class ChangeActions(object):
@@ -123,6 +123,8 @@ class ChangeActions(object):
         self.jira_key = jira_key
         self.task_id = task_id
         self.assigned_to_me = assigned_to_me
+        self.changes = {}
+        self.should_mark_done = False
 
     def mark_task_done(self):
         if self.task_id:
@@ -144,27 +146,33 @@ class ChangeActions(object):
 
     def change_assignee(self, change):
         if change.get('fromString') == JIRA_DISPLAY_NAME:
-            self.mark_task_done()
+            self.should_mark_done = True
 
     def change_status(self, change):
         if self.assigned_to_me and not change.get('toString') in WORKING_STATUSES:
-            self.mark_task_done()
+            self.should_mark_done = True
 
     def change_resolution(self, change):
         if self.assigned_to_me and change.get('to') is not None:
-            self.mark_task_done()
+            self.should_mark_done = True
 
     def change_priority(self, change):
         update = {'priority': 5 - int(change.get('to'))}
         # If critical or higher, Due Today
         if update['priority'] >= 3:
             update['due_date'] = datetime.date.today().isoformat()
-        self.update_task(update)
+        self.changes.update(update)
 
     def change_duedate(self, change):
         new_due_date = change.get('to')
         if new_due_date:
-            self.update_task({'due_date': new_due_date})
+            self.changes.update({'due_date': new_due_date})
+
+    def execute(self):
+        if self.should_mark_done:
+            self.mark_task_done()
+        elif self.changes:
+            self.update_task(self.changes)
 
 
 def lambda_handler(event, context):
@@ -177,8 +185,9 @@ def lambda_handler(event, context):
 
     # Get all issues that are assigned to me, make sure they have tasks
     assignee = event['issue']['fields'].get('assignee')
-    assigneed_to_me = assignee and assignee.get('displayName') == JIRA_DISPLAY_NAME
-    if  assigneed_to_me and event['issue']['fields']['resolution'] is None and event['issue']['fields']['status']['name'] in WORKING_STATUSES:
+    assigneed_to_me = assignee and assignee.get(
+        'displayName') == JIRA_DISPLAY_NAME
+    if assigneed_to_me and event['issue']['fields']['resolution'] is None and event['issue']['fields']['status']['name'] in WORKING_STATUSES:
         print("Assigned to me and should be active")
         task_id = get_task_id_from_key(key)
         if not task_id:
@@ -196,6 +205,7 @@ def lambda_handler(event, context):
         for change in changes:
             change_field = change.get('field')
             actions[change_field](change)
+        actions.execute()
 
     return {
         'statusCode': 200,
